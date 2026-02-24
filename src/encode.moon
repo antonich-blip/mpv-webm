@@ -363,7 +363,8 @@ encode = (region, startTime, endTime) ->
 		
 		-- Also add CRF here, as it used to be a part of the non-strict flags.
 		-- This might change in the future, I don't know.
-		if options.crf >= 0
+		-- Skip for AVIF since it has its own CRF in getFlags
+		if options.crf >= 0 and options.output_format != "avif"
 			append(command, {
 				"--ovcopts-add=crf=#{options.crf}"
 			})

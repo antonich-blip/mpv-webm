@@ -78,10 +78,14 @@ local options = {
 	gif_dither = 2,
 	-- Force square pixels on output video
 	-- Some players like recent Firefox versions display videos with non-square pixels with wrong aspect ratio
-	force_square_pixels = false,
+	force_square_pixels = true,
     -- MPV command to run upon successful encoding
     -- %{output} will be replaced with the path to the resulting file.
     completion_command = "",
+	-- AVIF CRF: 15=excellent, 25=good, 35=bad
+	avif_crf = 25,
+	-- AVIF compression level (0=fastest, 6=default, 12=slowest)
+	avif_compression = 6,
 }
 
 mpopts.read_options(options)

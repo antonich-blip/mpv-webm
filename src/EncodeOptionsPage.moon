@@ -154,7 +154,7 @@ class EncodeOptionsPage extends Page
 
 		-- I really dislike hardcoding this here, but, as said below, order in dicts isn't
 		-- guaranteed, and we can't use the formats dict keys.
-		formatIds = {"av1", "hevc", "webm-vp9", "avc", "avc-nvenc", "webm-vp8", "gif", "mp3", "raw"}
+		formatIds = {"av1", "hevc", "webm-vp9", "avc", "avc-nvenc", "webm-vp8", "gif", "avif", "mp3", "raw"}
 		formatOpts =
 			possibleValues: [{fId, formats[fId].displayName} for fId in *formatIds]
 
@@ -162,19 +162,21 @@ class EncodeOptionsPage extends Page
 			possibleValues: {{0, "bayer_scale 0"}, {1, "bayer_scale 1"},
 			{2, "bayer_scale 2"}, {3, "bayer_scale 3"}, {4, "bayer_scale 4"}, {5, "bayer_scale 5"}, {6, "sierra2_4a"}}
 
+		avifCrfOpts =
+			possibleValues: {{15, "excellent"}, {25, "good"}, {35, "bad"}}
+
+		avifCompressionOpts =
+			possibleValues: {{4, "fast"}, {6, "default"}, {8, "slow"}, {10, "slower"}}
+
 		-- This could be a dict instead of a array of pairs, but order isn't guaranteed
 		-- by dicts on Lua.
 		@options = {
 			{"output_format", Option("list", "Output Format", options.output_format, formatOpts)}
-			{"twopass", Option("bool", "Two Pass", options.twopass)},
-			{"apply_current_filters", Option("bool", "Apply Current Video Filters", options.apply_current_filters)}
-			{"scale_height", Option("list", "Scale Height", options.scale_height, scaleHeightOpts)},
-			{"strict_filesize_constraint", Option("bool", "Strict Filesize Constraint", options.strict_filesize_constraint)},
 			{"write_filename_on_metadata", Option("bool", "Write Filename on Metadata", options.write_filename_on_metadata)},
-			{"target_filesize", Option("int", "Target Filesize", options.target_filesize, filesizeOpts)},
-			{"crf", Option("int", "CRF", options.crf, crfOpts)},
 			{"fps", Option("list", "FPS", options.fps, fpsOpts)},
 			{"gif_dither", Option("list", "GIF Dither Type", options.gif_dither, gifDitherOpts, -> @options[1][2]\getValue! == "gif")},
+			{"avif_crf", Option("list", "AVIF CRF", options.avif_crf, avifCrfOpts, -> @options[1][2]\getValue! == "avif")},
+			{"avif_compression", Option("list", "AVIF Compression", options.avif_compression, avifCompressionOpts, -> @options[1][2]\getValue! == "avif")},
 			{"force_square_pixels", Option("bool", "Force Square Pixels", options.force_square_pixels)},
 		}
 

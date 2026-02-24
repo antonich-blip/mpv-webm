@@ -1,28 +1,92 @@
-# mpv-webm
-Simple WebM maker for [mpv][mpv], with no external dependencies.
+# mpv-webm Development Environment
 
-![sample](/img/sample.jpg)
+Isolated development environment for the mpv-webm plugin (https://github.com/ekisu/mpv-webm).
 
-## Installation
-Place [this][build] in your mpv `scripts` folder. The `scripts` folder can be found (or created, if it does not already exist) in the following paths:
-- Linux/macOS: `~/.config/mpv/scripts`, where `~` is your user's home folder;
-- Windows: mpv will try to load scripts from `%APPDATA%\mpv\scripts`, followed by `<mpv binary folder>\portable_config\scripts` and `<mpv binary folder>\mpv\scripts`; where `%APPDATA%` is a Windows-specific directory (typing `%APPDATA%` on Windows + R should take you to that folder), and `<mpv binary folder>` is the folder that contains the `mpv.exe` binary.
+## Structure
 
-Additional details about the folder structure can be found in the [mpv's manual][file locations].
+```
+~/dev/mpv-webm/          # Cloned plugin repository (source code)
+~/.config/mpv-dev/       # Isolated mpv configuration
+  ├── mpv.conf           # Dev-specific mpv config
+  ├── scripts/
+  │   └── webm.lua       # Symlink to built plugin
+  └── script-opts/
+      └── webm.conf      # Plugin configuration
+~/.local/bin/mpv-dev     # Wrapper script for isolated mpv
+```
 
-By default, the script is activated by the W (shift+w) key.
+## Setup Steps Completed
+
+1. **Cloned repository**: `~/dev/mpv-webm/`
+2. **Built plugin**: Run `make` in `~/dev/mpv-webm/` with moonscript
+3. **Created isolated config**: `~/.config/mpv-dev/`
+4. **Created wrapper script**: `~/.local/bin/mpv-dev`
 
 ## Usage
-Follow the on-screen instructions. Encoded WebM files will have audio/subs based on the current playback options (i.e. will be muted if no audio, won't have hardcoded subs if subs aren't visible).
 
-## Configuration
-You can configure the script's defaults by either changing the `options` at the beginning of the script, or placing a `webm.conf` inside the `script-opts` directory. A sample `webm.conf` file with the default options can be found [here][conf]. Note that you don't need to specify all options, only the ones you wish to override.
+### Running Isolated mpv
 
-## Building (development)
-Building requires [`moonc`, the MoonScript compiler][moonscript], added to the PATH, and a GNUMake compatible make. Run `make` on the root directory. The output files will be placed under the `build` directory.
+```bash
+# Add to PATH (add to ~/.bashrc or ~/.config/fish/config.fish)
+export PATH="$HOME/.local/bin:$PATH"
 
-[build]: https://github.com/ekisu/mpv-webm/releases/download/latest/webm.lua
-[file locations]: https://mpv.io/manual/master/#files
-[conf]: https://github.com/ekisu/mpv-webm/releases/download/latest/webm.conf
-[mpv]: http://mpv.io
-[moonscript]: http://moonscript.org
+# Run mpv with isolated config
+mpv-dev /path/to/video.mp4
+mpv-dev https://example.com/video.mp4
+```
+
+### Rebuilding the Plugin
+
+After making changes to the plugin source code:
+
+```bash
+# Option 1: Rebuild then run
+mpv-dev --rebuild /path/to/video.mp4
+
+# Option 2: Just rebuild
+cd ~/dev/mpv-webm
+nix-shell -p luaPackages.moonscript --run "make"
+
+# Then update symlink
+ln -sf ~/dev/mpv-webm/build/webm.lua ~/.config/mpv-dev/scripts/webm.lua
+```
+
+### Development Workflow
+
+1. Edit source files in `~/dev/mpv-webm/src/`
+2. Rebuild with `mpv-dev --rebuild` or manually:
+   ```bash
+   cd ~/dev/mpv-webm && nix-shell -p luaPackages.moonscript --run "make"
+   ln -sf ~/dev/mpv-webm/build/webm.lua ~/.config/mpv-dev/scripts/webm.lua
+   ```
+3. Test with `mpv-dev /path/to/test/video.mp4`
+
+### Custom mpv Binary
+
+To use a custom mpv binary (e.g., a custom-built version):
+
+```bash
+MPV_DEV_MPV=/path/to/custom/mpv mpv-dev /path/to/video.mp4
+```
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MPV_DEV_MPV` | Custom mpv binary path | `mpv` (system) |
+
+## Notes
+
+- The isolated config uses `--no-config` and `--config-dir` to prevent loading any external configuration
+- Log file is written to `~/.config/mpv-dev/mpv-dev.log`
+- Debug messages are enabled by default in the dev config
+
+## Troubleshooting
+
+### Plugin not loading
+- Check log file: `cat ~/.config/mpv-dev/mpv-dev.log`
+- Verify symlink: `ls -la ~/.config/mpv-dev/scripts/webm.lua`
+- Rebuild: `mpv-dev --rebuild`
+
+### "moonc not found"
+- Use nix-shell: `nix-shell -p luaPackages.moonscript --run "make"`
