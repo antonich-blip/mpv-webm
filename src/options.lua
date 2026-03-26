@@ -86,6 +86,10 @@ local options = {
 	avif_crf = 25,
 	-- AVIF compression level (0=fastest, 6=default, 12=slowest)
 	avif_compression = 6,
+	-- Animated WebP quality (0-100, higher=better quality)
+	animated_webp_quality = 80,
+	-- Animated WebP compression level (0=fastest, 6=slowest)
+	animated_webp_compression = 4,
 }
 
 mpopts.read_options(options)

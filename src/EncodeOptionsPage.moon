@@ -154,7 +154,7 @@ class EncodeOptionsPage extends Page
 
 		-- I really dislike hardcoding this here, but, as said below, order in dicts isn't
 		-- guaranteed, and we can't use the formats dict keys.
-		formatIds = {"av1", "hevc", "webm-vp9", "avc", "avc-nvenc", "webm-vp8", "gif", "avif", "mp3", "raw"}
+		formatIds = {"av1", "hevc", "webm-vp9", "avc", "avc-nvenc", "webm-vp8", "gif", "avif", "animated-webp", "mp3", "raw"}
 		formatOpts =
 			possibleValues: [{fId, formats[fId].displayName} for fId in *formatIds]
 
@@ -168,6 +168,14 @@ class EncodeOptionsPage extends Page
 		avifCompressionOpts =
 			possibleValues: {{4, "fast"}, {6, "default"}, {8, "slow"}, {10, "slower"}}
 
+		animatedWebpQualityOpts =
+			step: 5
+			min: 0
+			max: 100
+
+		animatedWebpCompressionOpts =
+			possibleValues: {{0, "fastest"}, {2, "fast"}, {4, "default"}, {6, "slowest"}}
+
 		-- This could be a dict instead of a array of pairs, but order isn't guaranteed
 		-- by dicts on Lua.
 		@options = {
@@ -177,6 +185,8 @@ class EncodeOptionsPage extends Page
 			{"gif_dither", Option("list", "GIF Dither Type", options.gif_dither, gifDitherOpts, -> @options[1][2]\getValue! == "gif")},
 			{"avif_crf", Option("list", "AVIF CRF", options.avif_crf, avifCrfOpts, -> @options[1][2]\getValue! == "avif")},
 			{"avif_compression", Option("list", "AVIF Compression", options.avif_compression, avifCompressionOpts, -> @options[1][2]\getValue! == "avif")},
+			{"animated_webp_quality", Option("int", "WebP Quality", options.animated_webp_quality, animatedWebpQualityOpts, -> @options[1][2]\getValue! == "animated-webp")},
+			{"animated_webp_compression", Option("list", "WebP Compression", options.animated_webp_compression, animatedWebpCompressionOpts, -> @options[1][2]\getValue! == "animated-webp")},
 			{"force_square_pixels", Option("bool", "Force Square Pixels", options.force_square_pixels)},
 		}
 
