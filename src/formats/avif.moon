@@ -7,6 +7,14 @@ class AVIF extends Format
 		@outputExtension = "avif"
 		@acceptsBitrate = false
 
+	-- Default to 60fps for animated AVIF output. The global fps filter is
+	-- chained after this one in get_video_filters, so a user-set options.fps
+	-- still wins (the later fps filter in the chain dictates output rate).
+	getPreFilters: =>
+		if options.fps <= 0
+			return {"fps=60"}
+		return {}
+
 	getFlags: =>
 		crf = options.avif_crf
 		compression = options.avif_compression
