@@ -274,25 +274,65 @@ find_path = (startTime, endTime) ->
 
 	return path, is_stream, is_temporary, startTime, endTime
 
-encode = (region, startTime, endTime) ->
+-- Builds an edl:// URL splicing the given sections of path into a single
+-- timeline, running from 0 to the sum of the section lengths.
+build_edl_path = (path, segments) ->
+	-- The %<length>% prefix quotes the path, so special characters (",", ";")
+	-- don't break the EDL syntax.
+	parts = ["%#{string.len(path)}%#{path},#{string.format('%.3f', seg.startTime)},#{string.format('%.3f', seg.endTime - seg.startTime)}" for seg in *segments]
+	return "edl://" .. table.concat(parts, ";")
+
+-- segments is a non-empty list of {startTime, endTime} sections to encode.
+encode = (region, segments) ->
 	format = formats[options.output_format]
 
-	originalStartTime = startTime
-	originalEndTime = endTime
-	path, is_stream, is_temporary, startTime, endTime = find_path(startTime, endTime) 
+	minStartTime = math.huge
+	maxEndTime = 0
+	totalLength = 0
+	for seg in *segments
+		minStartTime = math.min(minStartTime, seg.startTime)
+		maxEndTime = math.max(maxEndTime, seg.endTime)
+		totalLength += seg.endTime - seg.startTime
+
+	originalStartTime = minStartTime
+	originalEndTime = maxEndTime
+	path, is_stream, is_temporary, adjustedStartTime, adjustedEndTime = find_path(minStartTime, maxEndTime)
 	if not path
 		message("No file is being played")
 		return
 
-	command = {
-		"mpv", path,
-		"--start=" .. seconds_to_time_string(startTime, false, true),
-		"--end=" .. seconds_to_time_string(endTime, false, true),
-		-- When loop-file=inf, the encode won't end. Set this to override.
-		"--loop-file=no",
-		-- Same thing with --pause
-		"--no-pause"
-	}
+	-- find_path rebases the times when it dumps a stream cache into a
+	-- temporary file; shift every section accordingly.
+	timeOffset = minStartTime - adjustedStartTime
+	if timeOffset != 0
+		segments = [{startTime: seg.startTime - timeOffset, endTime: seg.endTime - timeOffset} for seg in *segments]
+
+	-- Multiple sections are spliced with mpv's EDL protocol into a single
+	-- timeline, so no --start/--end are needed; startTime/endTime here always
+	-- refer to the timeline of the encoded source.
+	local startTime, endTime, command
+	if #segments > 1
+		startTime = 0
+		endTime = totalLength
+		command = {
+			"mpv", build_edl_path(path, segments),
+			-- When loop-file=inf, the encode won't end. Set this to override.
+			"--loop-file=no",
+			-- Same thing with --pause
+			"--no-pause"
+		}
+	else
+		startTime = segments[1].startTime
+		endTime = segments[1].endTime
+		command = {
+			"mpv", path,
+			"--start=" .. seconds_to_time_string(startTime, false, true),
+			"--end=" .. seconds_to_time_string(endTime, false, true),
+			-- When loop-file=inf, the encode won't end. Set this to override.
+			"--loop-file=no",
+			-- Same thing with --pause
+			"--no-pause"
+		}
 
 	append(command, format\getCodecFlags!)
 
@@ -327,8 +367,7 @@ encode = (region, startTime, endTime) ->
 
 	if format.acceptsBitrate
 		if options.target_filesize > 0
-			length = endTime - startTime
-			video_bitrate, audio_bitrate = calculate_bitrate(supported_active_tracks, format, length)
+			video_bitrate, audio_bitrate = calculate_bitrate(supported_active_tracks, format, totalLength)
 			if video_bitrate
 				append(command, {
 					"--ovcopts-add=b=#{video_bitrate}k",
@@ -409,7 +448,7 @@ encode = (region, startTime, endTime) ->
 		if format.videoCodec == "libvpx"
 			-- We need to patch the pass log file before running the second pass.
 			msg.verbose("Patching libvpx pass log file...")
-			vp8_patch_logfile(get_pass_logfile_path(out_path), endTime - startTime)
+			vp8_patch_logfile(get_pass_logfile_path(out_path), totalLength)
 
 	command = format\postCommandModifier(command, region, startTime, endTime)
 

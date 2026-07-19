@@ -1,5 +1,6 @@
 from abc import ABCMeta
 from pathlib import Path
+import os
 import unittest
 import subprocess
 import json
@@ -25,19 +26,31 @@ class BaseTestCase(unittest.TestCase, metaclass=ABCMeta):
         socket_address = f'/tmp/mpvsocket-{str(uuid.uuid4())}'
         script_path = Path('build/webm.lua')
         mpv_process_args = [
-            'mpv',
+            # Sandboxed mpv wrappers (e.g. bubblewrap with a private /tmp) hide
+            # the IPC socket from us; MPV_DEV_MPV can point at a plain binary.
+            os.environ.get('MPV_DEV_MPV', 'mpv'),
             '-v',
             '--no-config',
+            # Without a terminal on stdin, mpv would read EOF and quit immediately.
+            '--no-input-terminal',
             '--vo=null',
             '--ao=null',
             '--load-scripts=no',
+            # --load-scripts=no doesn't cover scripts injected with --script by
+            # wrapper scripts (e.g. Nix-wrapped mpv); clear those too.
+            '--scripts=',
             '--idle=yes',
             f'--input-ipc-server={socket_address}',
         ]
 
+        # Log to a file instead of a pipe: nothing reads the pipe during the
+        # test, so mpv's verbose output would eventually fill it and deadlock.
+        self.mpv_log_path = f'{socket_address}.log'
+        self._mpv_log_file = open(self.mpv_log_path, 'wb')
+
         self.mpv_process = subprocess.Popen(
             mpv_process_args,
-            stdout=subprocess.PIPE,
+            stdout=self._mpv_log_file,
             stderr=subprocess.STDOUT,
         )
 
@@ -58,6 +71,7 @@ class BaseTestCase(unittest.TestCase, metaclass=ABCMeta):
     def tearDown(self) -> None:
         self.mpv_process.terminate()
         self.mpv_ipc.stop()
+        self._mpv_log_file.close()
 
         super().tearDown()
 

@@ -6,12 +6,15 @@ class MainPage extends Page
 			"2": self\setEndTime
 			"!": self\jumpToStartTime
 			"@": self\jumpToEndTime
+			"+": self\addSegment
+			"-": self\clearSegments
 			"o": self\changeOptions
 			"p": self\preview
 			"e": self\encode
 			"ESC": self\hide
 		@startTime = -1
 		@endTime = -1
+		@segments = {}
 		@region = Region!
 
 	setStartTime: =>
@@ -27,12 +30,38 @@ class MainPage extends Page
 			self\draw!
 
 	jumpToStartTime: =>
+		if @startTime < 0
+			return
 		mp.set_property("time-pos", @startTime)
 
 	jumpToEndTime: =>
+		if @endTime < 0
+			return
 		mp.set_property("time-pos", @endTime)
 
+	addSegment: =>
+		if @startTime < 0
+			message("No start time, can't add section")
+			return
+		if @endTime < 0
+			message("No end time, can't add section")
+			return
+		if @startTime >= @endTime
+			message("Start time is ahead of end time, can't add section")
+			return
+		@segments[#@segments + 1] = {startTime: @startTime, endTime: @endTime}
+		-- Reset the current selection, so the next section can be picked.
+		@startTime = -1
+		@endTime = -1
+		if @visible
+			self\clear!
+			self\draw!
+
+	clearSegments: =>
+		self\setupStartAndEndTimes!
+
 	setupStartAndEndTimes: =>
+		@segments = {}
 		if mp.get_property_native("duration")
 			-- Note: there exists an option called rebase-start-time, which, when set to no,
 			-- could cause the beginning of the video to not be at 0. Not sure how this
@@ -58,6 +87,11 @@ class MainPage extends Page
 		ass\append("#{bold('2:')} set end time (current is #{seconds_to_time_string(@endTime)})\\N")
 		ass\append("#{bold('!:')} jump to start time\\N")
 		ass\append("#{bold('@:')} jump to end time\\N")
+		ass\append("#{bold('+:')} add current times as a section\\N")
+		ass\append("#{bold('-:')} clear all sections\\N")
+		if #@segments > 0
+			section_strings = ["#{seconds_to_time_string(s.startTime)} - #{seconds_to_time_string(s.endTime)}" for s in *@segments]
+			ass\append("#{bold('sections:')} #{table.concat(section_strings, ", ")}\\N")
 		ass\append("#{bold('o:')} change encode options\\N")
 		ass\append("#{bold('p:')} preview\\N")
 		ass\append("#{bold('e:')} encode\\N\\N")
@@ -97,13 +131,17 @@ class MainPage extends Page
 
 	encode: =>
 		self\hide!
-		if @startTime < 0
-			message("No start time, aborting")
-			return
-		if @endTime < 0
-			message("No end time, aborting")
-			return
-		if @startTime >= @endTime
+		segments = [s for s in *@segments]
+		-- Include the current selection as the last section, when valid.
+		if @startTime >= 0 and @endTime >= 0 and @startTime < @endTime
+			segments[#segments + 1] = {startTime: @startTime, endTime: @endTime}
+		if #segments == 0
+			if @startTime < 0
+				message("No start time, aborting")
+				return
+			if @endTime < 0
+				message("No end time, aborting")
+				return
 			message("Start time is ahead of end time, aborting")
 			return
-		encode(@region, @startTime, @endTime)
+		encode(@region, segments)
