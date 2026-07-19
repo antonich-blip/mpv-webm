@@ -79,9 +79,9 @@ local options = {
 	-- Force square pixels on output video
 	-- Some players like recent Firefox versions display videos with non-square pixels with wrong aspect ratio
 	force_square_pixels = true,
-    -- MPV command to run upon successful encoding
-    -- %{output} will be replaced with the path to the resulting file.
-    completion_command = "",
+	-- MPV command to run upon successful encoding
+	-- %{output} will be replaced with the path to the resulting file.
+	completion_command = "",
 	-- AVIF CRF: 15=excellent, 25=good, 35=bad
 	avif_crf = 25,
 	-- AVIF compression level (0=fastest, 6=default, 12=slowest)
