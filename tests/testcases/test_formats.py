@@ -38,5 +38,11 @@ class TestFormats(BaseTestCase):
     def test_gif(self):
         self._test_with_format('gif')
 
+    def test_avif(self):
+        self._test_with_format('avif')
+
+    def test_copy(self):
+        self._test_with_format('copy')
+
     # TODO Test raw (probably too big, would require using a smaller section)
     # and avc-nvenc (yeah, good luck using that on GitHub Actions)

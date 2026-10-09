@@ -282,6 +282,80 @@ build_edl_path = (path, segments) ->
 	parts = ["%#{string.len(path)}%#{path},#{string.format('%.3f', seg.startTime)},#{string.format('%.3f', seg.endTime - seg.startTime)}" for seg in *segments]
 	return "edl://" .. table.concat(parts, ";")
 
+get_output_directory = (path, is_stream) ->
+	if options.output_directory != ""
+		return parse_directory(options.output_directory)
+	if is_stream
+		return parse_directory("~")
+	dir, _ = utils.split_path(path)
+	return dir
+
+-- Cuts a single section with ffmpeg's stream copy, keeping the source's
+-- compressed frames untouched.
+encode_copy = (format, region, segment, path, is_stream, is_temporary, originalStartTime, originalEndTime) ->
+	if region and region\is_valid!
+		message("Copy can't crop, as cropping requires re-encoding.\\NClear the crop or pick another format.")
+		return
+	if is_stream and not is_temporary
+		message("Copy only works on local files.")
+		return
+
+	ext = options.copy_extension
+	if ext == ""
+		ext = string.match(path, "%.([^%./\\]+)$") or "mkv"
+	format.outputExtension = ext
+
+	command = {
+		"ffmpeg", "-hide_banner", "-nostdin", "-y",
+		-- Seeking on the input snaps to the preceding keyframe.
+		"-ss", string.format("%.3f", segment.startTime),
+		"-i", path,
+		"-t", string.format("%.3f", segment.endTime - segment.startTime)
+	}
+
+	-- Only internal tracks can be mapped; subtitles are left out, as most
+	-- containers can't take arbitrary subtitle codecs.
+	active_tracks = get_active_tracks!
+	mapped_types = {"video"}
+	-- AVIF can only hold AV1 video.
+	if ext != "avif"
+		append(mapped_types, {"audio"})
+	for track_type in *mapped_types
+		for track in *active_tracks[track_type]
+			if not track['external'] and track['ff-index']
+				append(command, {"-map", "0:#{track['ff-index']}"})
+
+	append(command, {"-c", "copy"})
+
+	if options.write_filename_on_metadata
+		append(command, {"-metadata", "title=#{mp.get_property('filename/no-ext')}"})
+
+	out_path = utils.join_path(get_output_directory(path, is_stream), format_filename(originalStartTime, originalEndTime, format))
+	append(command, {out_path})
+
+	emit_event("encode-started")
+	msg.info("Copying to", out_path)
+	msg.verbose("Command line:", table.concat(command, " "))
+
+	if options.run_detached
+		message("Started copy, process was detached.")
+		utils.subprocess_detached({args: command})
+		return
+
+	message("Copying...")
+	res = run_subprocess({args: command, cancellable: false})
+	if res
+		message("Copied successfully! Saved to\\N#{bold(out_path)}")
+		emit_event("encode-finished", "success")
+		if options.completion_command != ""
+			mp.command(options.completion_command\gsub("%%{output}", out_path))
+	else
+		message("Copy failed! Is ffmpeg installed? Check the logs for details.")
+		emit_event("encode-finished", "fail")
+
+	if is_temporary
+		os.remove(path)
+
 -- segments is a non-empty list of {startTime, endTime} sections to encode.
 encode = (region, segments) ->
 	format = formats[options.output_format]
@@ -306,6 +380,15 @@ encode = (region, segments) ->
 	timeOffset = minStartTime - adjustedStartTime
 	if timeOffset != 0
 		segments = [{startTime: seg.startTime - timeOffset, endTime: seg.endTime - timeOffset} for seg in *segments]
+
+	if format.streamCopy
+		if #segments > 1
+			message("Copy only supports a single section.")
+			if is_temporary
+				os.remove(path)
+			return
+		encode_copy(format, region, segments[1], path, is_stream, is_temporary, originalStartTime, originalEndTime)
+		return
 
 	-- Multiple sections are spliced with mpv's EDL protocol into a single
 	-- timeline, so no --start/--end are needed; startTime/endTime here always
@@ -408,17 +491,8 @@ encode = (region, segments) ->
 				"--ovcopts-add=crf=#{options.crf}"
 			})
 
-	dir = ""
-	if is_stream
-		dir = parse_directory("~")
-	else
-		dir, _ = utils.split_path(path)
-
-	if options.output_directory != ""
-		dir = parse_directory(options.output_directory)
-
 	formatted_filename = format_filename(originalStartTime, originalEndTime, format)
-	out_path = utils.join_path(dir, formatted_filename)
+	out_path = utils.join_path(get_output_directory(path, is_stream), formatted_filename)
 	append(command, {"--o=#{out_path}"})
 
 	emit_event("encode-started")

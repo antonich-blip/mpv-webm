@@ -154,7 +154,7 @@ class EncodeOptionsPage extends Page
 
 		-- I really dislike hardcoding this here, but, as said below, order in dicts isn't
 		-- guaranteed, and we can't use the formats dict keys.
-		formatIds = {"av1", "hevc", "webm-vp9", "avc", "avc-nvenc", "webm-vp8", "gif", "avif", "animated-webp", "mp3", "raw"}
+		formatIds = {"av1", "hevc", "webm-vp9", "avc", "avc-nvenc", "webm-vp8", "gif", "avif", "animated-webp", "mp3", "raw", "copy"}
 		formatOpts =
 			possibleValues: [{fId, formats[fId].displayName} for fId in *formatIds]
 
@@ -163,10 +163,13 @@ class EncodeOptionsPage extends Page
 			{2, "bayer_scale 2"}, {3, "bayer_scale 3"}, {4, "bayer_scale 4"}, {5, "bayer_scale 5"}, {6, "sierra2_4a"}}
 
 		avifCrfOpts =
-			possibleValues: {{15, "excellent"}, {25, "good"}, {35, "bad"}}
+			possibleValues: {{25, "high quality"}, {32, "good"}, {40, "balanced"}, {45, "small"}, {50, "tiny"}}
 
 		avifCompressionOpts =
-			possibleValues: {{4, "fast"}, {6, "default"}, {8, "slow"}, {10, "slower"}}
+			possibleValues: {{4, "slower"}, {5, "slow"}, {6, "default"}, {8, "fast"}, {10, "faster"}}
+
+		copyExtensionOpts =
+			possibleValues: {{"", "same as source"}, {"mkv"}, {"mp4"}, {"webm"}, {"avif"}}
 
 		animatedWebpQualityOpts =
 			step: 5
@@ -185,6 +188,7 @@ class EncodeOptionsPage extends Page
 			{"gif_dither", Option("list", "GIF Dither Type", options.gif_dither, gifDitherOpts, -> @options[1][2]\getValue! == "gif")},
 			{"avif_crf", Option("list", "AVIF CRF", options.avif_crf, avifCrfOpts, -> @options[1][2]\getValue! == "avif")},
 			{"avif_compression", Option("list", "AVIF Compression", options.avif_compression, avifCompressionOpts, -> @options[1][2]\getValue! == "avif")},
+			{"copy_extension", Option("list", "Copy Container", options.copy_extension, copyExtensionOpts, -> @options[1][2]\getValue! == "copy")},
 			{"animated_webp_quality", Option("int", "WebP Quality", options.animated_webp_quality, animatedWebpQualityOpts, -> @options[1][2]\getValue! == "animated-webp")},
 			{"animated_webp_compression", Option("list", "WebP Compression", options.animated_webp_compression, animatedWebpCompressionOpts, -> @options[1][2]\getValue! == "animated-webp")},
 			{"force_square_pixels", Option("bool", "Force Square Pixels", options.force_square_pixels)},
