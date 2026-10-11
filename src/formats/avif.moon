@@ -21,8 +21,9 @@ class AVIF extends Format
 		{
 			"--ovcopts-add=crf=#{crf}",
 			"--ovcopts-add=preset=#{compression}",
-			-- tune=0 optimizes for visual quality rather than PSNR.
-			"--ovcopts-add=svtav1-params=tune=0:keyint=240"
+			-- tune=0 optimizes for visual quality rather than PSNR. Quantization
+			-- matrices (enable-qm, qm-min=0) cut ~10% at equal quality for free.
+			"--ovcopts-add=svtav1-params=tune=0:enable-qm=1:qm-min=0:keyint=240"
 		}
 
 formats["avif"] = AVIF!

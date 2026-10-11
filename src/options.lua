@@ -82,8 +82,8 @@ local options = {
 	-- MPV command to run upon successful encoding
 	-- %{output} will be replaced with the path to the resulting file.
 	completion_command = "",
-	-- AVIF CRF (0-63, lower=better quality, bigger file): 25=high quality, 40=balanced, 50=tiny
-	avif_crf = 40,
+	-- AVIF CRF (0-63, lower=better quality, bigger file): 25=high quality, 45=balanced, 50=small
+	avif_crf = 45,
 	-- AVIF compression level, i.e. the SVT-AV1 preset (0=slowest/smallest, 6=default, 13=fastest)
 	avif_compression = 6,
 	-- Container for the "copy" format, which cuts without re-encoding.

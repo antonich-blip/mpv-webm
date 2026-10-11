@@ -163,7 +163,7 @@ class EncodeOptionsPage extends Page
 			{2, "bayer_scale 2"}, {3, "bayer_scale 3"}, {4, "bayer_scale 4"}, {5, "bayer_scale 5"}, {6, "sierra2_4a"}}
 
 		avifCrfOpts =
-			possibleValues: {{25, "high quality"}, {32, "good"}, {40, "balanced"}, {45, "small"}, {50, "tiny"}}
+			possibleValues: {{25, "high quality"}, {32, "good"}, {40, "fine"}, {45, "balanced"}, {50, "small"}}
 
 		avifCompressionOpts =
 			possibleValues: {{4, "slower"}, {5, "slow"}, {6, "default"}, {8, "fast"}, {10, "faster"}}
