@@ -20,6 +20,12 @@ local options = {
 	-- %S, %E - Start and end time, without milliseconds
 	-- %M - "-audio", if audio is enabled, empty otherwise
 	-- %R - "-(height)p", where height is the video's height, or scale_height, if it's enabled.
+	-- %n - Sequence number (1, 2, 3, ...). The first filename (starting
+	-- at 1) not already taken in the output directory is selected when
+	-- formatting, so gaps left by deleted clips are filled. There is no
+	-- persistent counter to reset; concurrent encodes may still race.
+	-- Use %04n (or %02n, etc.) to zero-pad (clip_%04n -> clip_0001, ...).
+	-- Templates without a counter keep the previous behavior (may overwrite).
 	-- More specifiers are supported, see https://mpv.io/manual/master/#options-screenshot-template
 	-- Property expansion is supported (with %{} at top level, ${} when nested), see https://mpv.io/manual/master/#property-expansion
 	output_template = "%F-[%s-%e]%M",
@@ -50,8 +56,11 @@ local options = {
 	-- avc-nvenc (h264-NVENC/AAC)
 	-- webm-vp8 (libvpx/libvorbis)
 	-- gif
+	-- avif (libsvtav1)
+	-- animated-webp (libwebp_anim)
 	-- mp3 (libmp3lame)
-	-- and raw (rawvideo/pcm_s16le).
+	-- raw (rawvideo/pcm_s16le)
+	-- and copy (stream copy, no re-encoding).
 	output_format = "webm-vp8",
 	twopass = true,
 	-- If set, applies the video filters currently used on the playback to the encode.

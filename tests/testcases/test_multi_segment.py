@@ -79,3 +79,66 @@ class TestMultiSegmentEncode(BaseTestCase):
         finished_event = self.waitForEvent('webm-encode-finished', timeout=240)
         self.assertIsInstance(finished_event, MpvScriptMessageEvent)
         self.assertEqual(['webm-encode-finished', 'success'], finished_event.args)
+
+
+class TestMultiSegmentSpeed(BaseTestCase):
+    """Sections spliced into one EDL timeline must also honor playback speed."""
+
+    FRAME = 64 * 64 * 3
+
+    def makeColorSource(self):
+        # Green everywhere except a red band covering source seconds 2..3.
+        return self.createVideo(
+            name="sections.mkv", size="64x64", duration=5, color="green",
+            filters="drawbox=x=0:y=0:w=iw:h=ih:color=red:t=fill:"
+                    "enable='between(t,2,3)'",
+        )
+
+    def addSections(self, *sections):
+        # Commit all but the last section, as '+' does; the last one stays the
+        # current selection, exactly as when picking them by hand.
+        for count, (start, end) in enumerate(sections[:-1], 1):
+            self.setRange(start, end)
+            event = self.scriptMessage("mpv-webm-add-segment", event="webm-segment-added")
+            self.assertEqual(event.args[1], str(count))
+        self.setRange(*sections[-1])
+
+    def frameColor(self, data, index):
+        frame = data[index * self.FRAME:(index + 1) * self.FRAME]
+        pixels = len(frame) // 3
+        return sum(frame[0::3]) / pixels, sum(frame[1::3]) / pixels
+
+    def test_sections_survive_speed_change(self):
+        source = self.makeColorSource()
+        for speed in (1, 0.5, 2):
+            with self.subTest(speed=speed):
+                self.openTestVideoFile(source)
+                self.setProperty("speed", speed)
+                # 0.5s of green, then 1s of red: 1.5s of source in total.
+                self.addSections((0.5, 1), (2, 3))
+                self.updateScriptOptions({"output_format": "avc",
+                                          "output_template": f"sections_{speed}"})
+                event = self.scriptMessage("mpv-webm-encode", event="webm-encode-finished", timeout=60)
+                self.assertEqual(event.args, ["webm-encode-finished", "success"], self.getLog())
+
+                out = self.tempdir / f"sections_{speed}.mp4"
+                duration = float(self.probeVideo(out)["format"]["duration"])
+                self.assertAlmostEqual(duration, 1.5 / speed, delta=0.25)
+
+                data = self.decodeVideo(out)
+                frames = len(data) // self.FRAME
+                self.assertGreater(frames, 2)
+                red, green = self.frameColor(data, 0)
+                self.assertGreater(green, red, f"speed={speed}: should start green")
+                red, green = self.frameColor(data, frames - 1)
+                self.assertGreater(red, green, f"speed={speed}: should end red")
+
+    def test_copy_refuses_speed_change(self):
+        self.openTestVideoFile(self.makeColorSource())
+        self.setProperty("speed", 2)
+        self.setRange(1, 3)
+        self.updateScriptOptions({"output_format": "copy", "output_template": "copied"})
+        event = self.scriptMessage("mpv-webm-encode", event="webm-encode-finished")
+        self.assertEqual(event.args[:2], ["webm-encode-finished", "fail"])
+        self.assertIn("speed", event.args[2])
+        self.assertFalse((self.tempdir / "copied.mkv").exists())

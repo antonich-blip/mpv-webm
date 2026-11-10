@@ -87,9 +87,9 @@ get_fps_filters = ->
 	return {}
 
 get_contrast_brightness_and_saturation_filters = ->
-	mpv_brightness = mp.get_property("brightness")
-	mpv_contrast = mp.get_property("contrast")
-	mpv_saturation = mp.get_property("saturation")
+	mpv_brightness = mp.get_property_number("brightness", 0)
+	mpv_contrast = mp.get_property_number("contrast", 0)
+	mpv_saturation = mp.get_property_number("saturation", 0)
 
 	if mpv_brightness == 0 and mpv_contrast == 0 and mpv_saturation == 0
 		-- Default values, no need to change anything.
@@ -142,8 +142,6 @@ get_sub_options = ->
 	append_property(ret, "sub-ass-use-video-data")
 	append_property(ret, "sub-auto")
 	append_property(ret, "sub-pos")
-	append_property(ret, "sub-delay")
-	append_property(ret, "sub-speed")
 	append_property(ret, "sub-scale")
 	append_property(ret, "sub-font")
 	append_property(ret, "sub-font-size")
@@ -167,20 +165,123 @@ get_sub_options = ->
 
 	return ret
 
-get_speed_flags = ->
+-- Handle speed changes
+--
+-- Two time domains are involved:
+--   source  - the user's selection inside the file (sourceStart/sourceEnd)
+--   encoder - the timeline mpv's encoder uses, after the filter chain (with
+--             possible speed changes) is applied
+--
+-- mpv's --start and --end options are a little counter-intuitive:
+-- 1. --start takes a source time as input and seeks to that point.
+-- 2. The filters are applied
+-- 3. then the same --start time is used to encode.
+-- But if the timeline has changed due to speed filters, the start time is now
+-- offset and will be wrong, leading to the wrong part of the video being encoded
+-- Same applies for the end time, due to timeline changes the end time can be offset.
+
+-- To fix this, we need to offset the filtered timeline back to the old sourceStart,
+-- so the sourceStart time and the encoderStart time are identical.
+
+-- Bundle relevant start/end times & speed
+encode_times = (startTime, endTime, speed) ->
+	outputDuration = (endTime - startTime) / speed
+	{
+		sourceStart: startTime
+		sourceEnd: endTime
+		speed: speed
+		encoderStart: startTime -- not scaled, see comment above
+		encoderEnd: startTime + outputDuration
+		outputDuration: outputDuration
+	}
+
+get_speed_video_flags = (times) ->
+	if times.speed == 1
+		return {}
+	-- Rebase both streams to the selection origin, not their first frame/sample,
+	-- so an initial A/V offset survives the speed change.
+	{
+		"--vf-add=trim=start=#{times.sourceStart}:end=#{times.sourceEnd}"
+		"--vf-add=setpts=(PTS-#{times.sourceStart}/TB)/#{times.speed}"
+		"--vf-add=setpts=PTS+#{times.sourceStart}/TB"
+	}
+
+get_speed_audio_flags = (times) ->
+	if times.speed == 1
+		return {}
+	-- libavfilter's atempo only accepts [0.5, 100]; below that it has to be
+	-- chained, so that any of mpv's speeds (down to 0.01) works.
+	atempo = {}
+	tempo = times.speed
+	while tempo < 0.5
+		atempo[#atempo + 1] = "atempo=0.5"
+		tempo *= 2
+	atempo[#atempo + 1] = "atempo=#{tempo}"
+	-- Scale the initial offset from the shared selection origin before atempo.
+	-- atempo changes sample duration but preserves the first input timestamp.
+	{
+		"--af-add=atrim=start=#{times.sourceStart}:end=#{times.sourceEnd}"
+		"--af-add=asetpts=(PTS-#{times.sourceStart}/TB)/#{times.speed}"
+		"--af-add=#{table.concat(atempo, ",")}"
+		"--af-add=asetpts=PTS+#{times.sourceStart}/TB"
+	}
+
+get_sub_speed_flags = (times, source_time = false) ->
+	sub_speed = mp.get_property_number("sub-speed", 1)
+	sub_delay = mp.get_property_number("sub-delay", 0)
+	-- A pre-retiming subtitle filter (GIF) needs the original user settings.
+	if times.speed != 1 and not source_time
+		-- Project both user adjustments into the encoder timeline.
+		sub_speed *= 1 / times.speed
+		sub_delay = sub_delay / times.speed + times.sourceStart - times.sourceStart / times.speed
 	ret = {}
-	speed = mp.get_property_native("speed")
-	if speed != 1
-		append(ret, {
-			"--vf-add=setpts=PTS/#{speed}",
-			"--af-add=atempo=#{speed}",
-			"--sub-speed=1/#{speed}"
-		})
+	append(ret, {"--sub-speed=#{sub_speed}"}) if sub_speed != 1
+	append(ret, {"--sub-delay=#{sub_delay}"}) if sub_delay != 0
 	return ret
 
 get_metadata_flags = ->
 	title = mp.get_property("filename/no-ext")
 	return {"--oset-metadata=title=%#{string.len(title)}%#{title}"}
+
+-- Wrap a filter parameter in mpv's raw string syntax so property expansion
+-- can't interpret anything inside it.
+quote_filter_param = (value) ->
+	"%#{string.len(value)}%#{value}"
+
+-- mpv exposes libavfilter bridge filters as "lavfi-<name>" and reports their
+-- arguments as positional placeholders (@0, @1, ...) or as regular option
+-- names. The placeholder form is only understood by mpv's own option parser,
+-- so turn it into a libavfilter-style argument list. Values are left unquoted
+-- because the GIF format embeds these filters in a raw graph, where mpv's
+-- property expansion (and with it the %N% raw string syntax) does not run.
+serialize_lavfi_filter = (filter) ->
+	name = filter["name"]
+	params = filter["params"] or {}
+
+	if name == "lavfi"
+		graph = params["graph"]
+		return graph and "#{name}=[#{graph}]" or name
+
+	positional = {}
+	named = {}
+	for key, value in pairs params
+		index = key\match("^@(%d+)$")
+		if index
+			positional[tonumber(index) + 1] = value
+		else
+			named[key] = value
+
+	args = {}
+	if #positional > 0
+		for value in *positional
+			append(args, {value})
+	else
+		keys = [key for key in pairs named]
+		table.sort(keys)
+		for key in *keys
+			append(args, {"#{key}=#{named[key]}"})
+
+	return #args > 0 and "#{name}=#{table.concat(args, ":")}" or name
 
 apply_current_filters = (filters) ->
 	vf = mp.get_property_native("vf")
@@ -194,8 +295,11 @@ apply_current_filters = (filters) ->
 			continue
 		str = filter["name"]
 		params = filter["params"] or {}
-		for k, v in pairs params
-			str = str .. ":#{k}=%#{string.len(v)}%#{v}"
+		if str == "lavfi" or str\match("^lavfi%-")
+			str = serialize_lavfi_filter(filter)
+		else
+			for k, v in pairs params
+				str = str .. ":#{k}=#{quote_filter_param(v)}"
 		append(filters, {str})
 
 get_video_filters = (format, region) ->
@@ -210,13 +314,14 @@ get_video_filters = (format, region) ->
 
 	append(filters, get_scale_filters!)
 	append(filters, get_fps_filters!)
-	append(filters, get_contrast_brightness_and_saturation_filters!)
+	if options.apply_current_filters
+		append(filters, get_contrast_brightness_and_saturation_filters!)
 
 	append(filters, format\getPostFilters!)
 
 	return filters
 
-get_video_encode_flags = (format, region) ->
+get_video_encode_flags = (format, region, times) ->
 	flags = {}
 	append(flags, get_playback_options!)
 	append(flags, get_sub_options!)
@@ -228,7 +333,9 @@ get_video_encode_flags = (format, region) ->
 			"--vf-add=#{f}"
 		})
 
-	append(flags, get_speed_flags!)
+	if not format.handlesSpeedInFilterGraph
+		append(flags, get_speed_video_flags(times))
+	append(flags, get_sub_speed_flags(times, format.rendersSubtitlesInSourceTime))
 	return flags
 
 calculate_bitrate = (active_tracks, format, length) ->
@@ -330,7 +437,8 @@ encode_copy = (format, region, segment, path, is_stream, is_temporary, originalS
 	if options.write_filename_on_metadata
 		append(command, {"-metadata", "title=#{mp.get_property('filename/no-ext')}"})
 
-	out_path = utils.join_path(get_output_directory(path, is_stream), format_filename(originalStartTime, originalEndTime, format))
+	dir = get_output_directory(path, is_stream)
+	out_path = utils.join_path(dir, format_filename(originalStartTime, originalEndTime, format, dir))
 	append(command, {out_path})
 
 	emit_event("encode-started")
@@ -356,9 +464,27 @@ encode_copy = (format, region, segment, path, is_stream, is_temporary, originalS
 	if is_temporary
 		os.remove(path)
 
+-- Probe the same executable before entering any launch mode (including the
+-- progress shell and detached mode, which otherwise hide spawn failures).
+check_encoder = ->
+    result = utils.subprocess({args: {"mpv", "--no-config", "--version"}, cancellable: false})
+    if result.status == 0
+        return true
+    explanation = "Cannot start the mpv encoder. Add the folder containing mpv to PATH, then restart the player. See README: Encoder executable."
+    if result.status and result.status > 0
+        explanation = "The mpv encoder failed its startup check. Run mpv --version and check the logs for details."
+    msg.error(explanation)
+    msg.error("Encoder startup check: ", result.error or "", result.stderr or "", result.stdout or "")
+    message(explanation, 10)
+    emit_event("encode-finished", "fail", explanation)
+    return false
+
 -- segments is a non-empty list of {startTime, endTime} sections to encode.
 encode = (region, segments) ->
 	format = formats[options.output_format]
+	-- Copy runs ffmpeg, not an mpv encoder.
+	if not format.streamCopy and not check_encoder!
+		return
 
 	minStartTime = math.huge
 	maxEndTime = 0
@@ -381,9 +507,17 @@ encode = (region, segments) ->
 	if timeOffset != 0
 		segments = [{startTime: seg.startTime - timeOffset, endTime: seg.endTime - timeOffset} for seg in *segments]
 
+	speed = mp.get_property_native("speed") or 1
+
 	if format.streamCopy
+		failure = nil
 		if #segments > 1
-			message("Copy only supports a single section.")
+			failure = "Copy only supports a single section."
+		elseif speed != 1
+			failure = "Copy can't change the playback speed.\\NReset it to 1x or pick another format."
+		if failure
+			message(failure)
+			emit_event("encode-finished", "fail", failure)
 			if is_temporary
 				os.remove(path)
 			return
@@ -391,31 +525,26 @@ encode = (region, segments) ->
 		return
 
 	-- Multiple sections are spliced with mpv's EDL protocol into a single
-	-- timeline, so no --start/--end are needed; startTime/endTime here always
-	-- refer to the timeline of the encoded source.
-	local startTime, endTime, command
+	-- timeline running from 0 to the sum of the section lengths; the speed
+	-- handling then treats that timeline like a single section.
+	source = path
+	startTime = segments[1].startTime
+	endTime = segments[1].endTime
 	if #segments > 1
+		source = build_edl_path(path, segments)
 		startTime = 0
 		endTime = totalLength
-		command = {
-			"mpv", build_edl_path(path, segments),
-			-- When loop-file=inf, the encode won't end. Set this to override.
-			"--loop-file=no",
-			-- Same thing with --pause
-			"--no-pause"
-		}
-	else
-		startTime = segments[1].startTime
-		endTime = segments[1].endTime
-		command = {
-			"mpv", path,
-			"--start=" .. seconds_to_time_string(startTime, false, true),
-			"--end=" .. seconds_to_time_string(endTime, false, true),
-			-- When loop-file=inf, the encode won't end. Set this to override.
-			"--loop-file=no",
-			-- Same thing with --pause
-			"--no-pause"
-		}
+	times = encode_times(startTime, endTime, speed)
+
+	command = {
+		"mpv", source,
+		"--start=" .. seconds_to_time_string(times.encoderStart, false, true),
+		"--end=" .. seconds_to_time_string(times.encoderEnd, false, true),
+		-- When loop-file=inf, the encode won't end. Set this to override.
+		"--loop-file=no",
+		-- Same thing with --pause
+		"--no-pause"
+	}
 
 	append(command, format\getCodecFlags!)
 
@@ -441,7 +570,10 @@ encode = (region, segments) ->
 
 	if format.videoCodec != ""
 		-- All those are only valid for video codecs.
-		append(command, get_video_encode_flags(format, region))
+		append(command, get_video_encode_flags(format, region, times))
+
+	if format.audioCodec != ""
+		append(command, get_speed_audio_flags(times))
 	
 	append(command, format\getFlags!)
 
@@ -450,7 +582,7 @@ encode = (region, segments) ->
 
 	if format.acceptsBitrate
 		if options.target_filesize > 0
-			video_bitrate, audio_bitrate = calculate_bitrate(supported_active_tracks, format, totalLength)
+			video_bitrate, audio_bitrate = calculate_bitrate(supported_active_tracks, format, times.outputDuration)
 			if video_bitrate
 				append(command, {
 					"--ovcopts-add=b=#{video_bitrate}k",
@@ -463,9 +595,10 @@ encode = (region, segments) ->
 			
 			if options.strict_filesize_constraint
 				type = format.videoCodec != "" and "ovc" or "oac"
+				strict_bitrate = format.videoCodec != "" and video_bitrate or audio_bitrate
 				append(command, {
-					"--#{type}opts-add=minrate=#{bitrate}k",
-					"--#{type}opts-add=maxrate=#{bitrate}k",
+					"--#{type}opts-add=minrate=#{strict_bitrate}k",
+					"--#{type}opts-add=maxrate=#{strict_bitrate}k",
 				})
 		else
 			type = format.videoCodec != "" and "ovc" or "oac"
@@ -491,15 +624,19 @@ encode = (region, segments) ->
 				"--ovcopts-add=crf=#{options.crf}"
 			})
 
-	formatted_filename = format_filename(originalStartTime, originalEndTime, format)
-	out_path = utils.join_path(get_output_directory(path, is_stream), formatted_filename)
+	dir = get_output_directory(path, is_stream)
+	formatted_filename = format_filename(originalStartTime, originalEndTime, format, dir)
+	out_path = utils.join_path(dir, formatted_filename)
 	append(command, {"--o=#{out_path}"})
 
 	emit_event("encode-started")
 
 	-- Do the first pass now, as it won't require the output path. I don't think this works on streams.
 	-- Also this will ignore run_detached, at least for the first pass.
-	if options.twopass and format.supportsTwopass and not is_stream
+	-- The current x264/x265 settings cannot use a second pass in constant-quality mode.
+	-- Other encoders, including libvpx and libaom, can still use two passes.
+	constant_quality_x26x = options.target_filesize <= 0 and (format.videoCodec == "libx264" or format.videoCodec == "libx265")
+	if options.twopass and format.supportsTwopass and not constant_quality_x26x and not is_stream
 		-- copy the commandline
 		first_pass_cmdline = [arg for arg in *command]
 		append(first_pass_cmdline, {
@@ -522,9 +659,9 @@ encode = (region, segments) ->
 		if format.videoCodec == "libvpx"
 			-- We need to patch the pass log file before running the second pass.
 			msg.verbose("Patching libvpx pass log file...")
-			vp8_patch_logfile(get_pass_logfile_path(out_path), totalLength)
+			vp8_patch_logfile(get_pass_logfile_path(out_path), times.outputDuration)
 
-	command = format\postCommandModifier(command, region, startTime, endTime)
+	command = format\postCommandModifier(command, region, times)
 
 	msg.info("Encoding to", out_path)
 	msg.verbose("Command line:", table.concat(command, " "))
@@ -538,7 +675,7 @@ encode = (region, segments) ->
 			message("Started encode...")
 			res = run_subprocess({args: command, cancellable: false})
 		else
-			ewp = EncodeWithProgress(startTime, endTime)
+			ewp = EncodeWithProgress(times.encoderStart, times.encoderEnd)
 			res = ewp\startEncode(command)
 		if res
 			message("Encoded successfully! Saved to\\N#{bold(out_path)}")
@@ -552,5 +689,7 @@ encode = (region, segments) ->
 		
 		-- Clean up pass log file.
 		os.remove(get_pass_logfile_path(out_path))
+		os.remove "x264_2pass.log"
+		os.remove "x264_2pass.log.mbtree"
 		if is_temporary
 			os.remove(path)

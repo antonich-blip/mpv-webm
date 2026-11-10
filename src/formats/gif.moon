@@ -6,18 +6,29 @@ class GIF extends Format
 		@audioCodec = ""
 		@outputExtension = "gif"
 		@acceptsBitrate = false
+		-- GIF builds its own video filter graph, so it applies the speed
+		-- trim/setpts itself; encode then skips the generic video speed flags.
+		@handlesSpeedInFilterGraph = true
+		-- The sub filter runs after the graph retimes the video, so it needs
+		-- encoder-domain subtitle speed/delay, just like other video formats.
+		@rendersSubtitlesInSourceTime = false
 
-	postCommandModifier: (command, region, startTime, endTime) =>
+	postCommandModifier: (command, region, times) =>
 		new_command = {}
 
-		start_ts = seconds_to_time_string(startTime, false, true)
-		end_ts = seconds_to_time_string(endTime, false, true)
+		start_ts = seconds_to_time_string(times.sourceStart, false, true)
+		end_ts = seconds_to_time_string(times.sourceEnd, false, true)
 		-- Escape hell...
 		start_ts = start_ts\gsub(":", "\\\\:")
 		end_ts = end_ts\gsub(":", "\\\\:")
 
 		-- Need to use both trim and --start/--end
-		cfilter = "[vid1]trim=start=#{start_ts}:end=#{end_ts}[vidtmp];"
+		cfilter = "[in]trim=start=#{start_ts}:end=#{end_ts}[vidtmp];"
+
+		-- Mirror the default trim -> setpts order inside the graph.
+		if times.speed != 1
+			cfilter = cfilter .. "[vidtmp]setpts=(PTS-#{times.sourceStart}/TB)/#{times.speed}[vidtmp];"
+			cfilter = cfilter .. "[vidtmp]setpts=PTS+#{times.sourceStart}/TB[vidtmp];"
 
 		-- We iterate over commands in the order they are.
 		-- The order is OK except for deinterlace which needs to be applied first:
@@ -45,16 +56,21 @@ class GIF extends Format
 				append(new_command, {v})
 				continue
 
-		-- complete the complex filter with split->palettegen->paletteuse
-		cfilter = cfilter .. "[vidtmp]split[topal][vidf];"
-		cfilter = cfilter .. "[topal]palettegen[pal];"
+		-- Finish the video filter graph before rendering subtitles. This matches
+		-- normal mpv playback, where subtitles are rendered over the cropped
+		-- and scaled video rather than being cropped with the source frame.
+		cfilter = cfilter .. "[vidtmp]null[out]"
+		append(new_command, { "--vf-add=lavfi=[#{cfilter}]", "--vf-add=sub" })
 
-		cfilter = cfilter .. "[vidf][pal]paletteuse=diff_mode=rectangle"
+		-- Generate the palette after subtitles have been rendered so subtitle
+		-- colors are represented in the GIF palette.
+		palette_filter = "[in]split[topal][vidf];"
+		palette_filter = palette_filter .. "[topal]palettegen[pal];"
+		palette_filter = palette_filter .. "[vidf][pal]paletteuse=diff_mode=rectangle"
 		if options.gif_dither != 6
-			cfilter = cfilter .. ":dither=bayer:bayer_scale=#{options.gif_dither}"
-		cfilter = cfilter .. "[vo]"
-
-		append(new_command, { "--lavfi-complex=#{cfilter}" })
+			palette_filter = palette_filter .. ":dither=bayer:bayer_scale=#{options.gif_dither}"
+		palette_filter = palette_filter .. "[out]"
+		append(new_command, { "--vf-add=lavfi=[#{palette_filter}]" })
 
 		return new_command
 
