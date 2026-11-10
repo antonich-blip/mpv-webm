@@ -136,7 +136,7 @@ class TestSpeedEncode(BaseTestCase):
                            "-of", "csv=p=0", str(path))
         pts = [float(t.strip(",")) for t in out.decode().split()]
         # Keep one decoded frame per reported PTS, including variable-rate GIFs.
-        data = self.runTool("ffmpeg", "-v", "error", "-i", str(path), "-vsync", "0",
+        data = self.runTool("ffmpeg", "-v", "error", "-i", str(path), "-fps_mode", "passthrough",
                             "-pix_fmt", "rgb24", "-f", "rawvideo", "-")
         frames = len(pts)
         self.assertGreater(frames, 0, "ffprobe returned no video frame timestamps")
